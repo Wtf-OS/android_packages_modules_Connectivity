@@ -26,6 +26,7 @@
 #include "android-base/strings.h"
 #include "android-base/unique_fd.h"
 #include "bpf/BpfMap.h"
+#include "bpf/KernelUtils.h"
 #include "netd.h"
 #include "netdbpf/BpfNetworkStats.h"
 
@@ -60,6 +61,9 @@ Result<IfaceValue> ifindex2name(const uint32_t ifindex) {
 }
 
 void bpfRegisterIface(const char* iface) {
+    // Kernel 3.10 (msm8916) has no BPF maps - skip registration to avoid
+    // BpfMap constructor abortOnMismatch in system_server.
+    if (!isAtLeastKernelVersion(4, 14, 0)) return;
     if (!iface) return;
     if (strlen(iface) >= sizeof(IfaceValue)) return;
     uint32_t ifindex = if_nametoindex(iface);
@@ -81,6 +85,10 @@ int bpfGetUidStatsInternal(uid_t uid, StatsValue* stats,
 }
 
 int bpfGetUidStats(uid_t uid, StatsValue* stats) {
+    if (!isAtLeastKernelVersion(4, 14, 0)) {
+        *stats = {};
+        return 0;
+    }
     static BpfMapRO<uint32_t, StatsValue> appUidStatsMap(APP_UID_STATS_MAP_PATH);
     return bpfGetUidStatsInternal(uid, stats, appUidStatsMap);
 }
@@ -113,6 +121,10 @@ int bpfGetIfaceStatsInternal(const char* iface, StatsValue* stats,
 }
 
 int bpfGetIfaceStats(const char* iface, StatsValue* stats) {
+    if (!isAtLeastKernelVersion(4, 14, 0)) {
+        *stats = {};
+        return 0;
+    }
     return bpfGetIfaceStatsInternal(iface, stats, getIfaceStatsMap(), ifindex2name);
 }
 
@@ -128,6 +140,10 @@ int bpfGetIfIndexStatsInternal(uint32_t ifindex, StatsValue* stats,
 }
 
 int bpfGetIfIndexStats(int ifindex, StatsValue* stats) {
+    if (!isAtLeastKernelVersion(4, 14, 0)) {
+        *stats = {};
+        return 0;
+    }
     return bpfGetIfIndexStatsInternal(ifindex, stats, getIfaceStatsMap());
 }
 
@@ -192,6 +208,9 @@ int parseBpfNetworkStatsDetailInternal(std::vector<stats_line>& lines,
 }
 
 int parseBpfNetworkStatsDetail(std::vector<stats_line>* lines) {
+    // Kernel 3.10 has no pinned traffic maps; return empty stats during bring-up.
+    if (!isAtLeastKernelVersion(4, 14, 0)) return 0;
+
     static BpfMapRO<uint32_t, uint32_t> configurationMap(CONFIGURATION_MAP_PATH);
     static BpfMap<StatsKey, StatsValue> statsMapA(STATS_MAP_A_PATH);
     static BpfMap<StatsKey, StatsValue> statsMapB(STATS_MAP_B_PATH);
@@ -268,6 +287,7 @@ int parseBpfNetworkStatsDevInternal(std::vector<stats_line>& lines,
 }
 
 int parseBpfNetworkStatsDev(std::vector<stats_line>* lines) {
+    if (!isAtLeastKernelVersion(4, 14, 0)) return 0;
     return parseBpfNetworkStatsDevInternal(*lines, getIfaceStatsMap(), ifindex2name);
 }
 

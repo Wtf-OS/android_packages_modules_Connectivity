@@ -1,7 +1,7 @@
 # Note: This will actually execute /apex/com.android.tethering/bin/netbpfload
 # by virtue of 'service bpfloader' being overridden by the apex shipped .rc
 # Warning: most of the below settings are irrelevant unless the apex is missing.
-service bpfloader /system/bin/false
+service bpfloader /system/bin/true
     # netbpfload will do network bpf loading, then execute /system/bin/bpfloader
     #! capabilities CHOWN SYS_ADMIN NET_ADMIN
     # The following group memberships are a workaround for lack of DAC_OVERRIDE
@@ -65,5 +65,5 @@ service bpfloader /system/bin/false
     #    'cannot prove return value is 0 or 1' or 'unsupported / unknown operation / helper',
     #    'invalid bpf_context access', etc.
     #
-    reboot_on_failure reboot,netbpfload-missing
+    # No eBPF in the osprey kernel; continue booting without network BPF.
     updatable

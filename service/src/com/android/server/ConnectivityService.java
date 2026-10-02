@@ -2240,7 +2240,11 @@ public class ConnectivityService extends IConnectivityManager.Stub
         // updates blocked reasons when firewall chain and data saver status is updated based on
         // bpf map contents instead of receiving callbacks from NPMS
         // LineageOS / CalyxOS: Always register callback, as it is needed for transport firewall.
-        mPolicyManager.registerNetworkPolicyCallback(null, mPolicyCallback);
+        try {
+            mPolicyManager.registerNetworkPolicyCallback(null, mPolicyCallback);
+        } catch (Throwable e) {
+            loge("Failed to register network policy callback: " + e);
+        }
 
         final PowerManager powerManager = (PowerManager) context.getSystemService(
                 Context.POWER_SERVICE);

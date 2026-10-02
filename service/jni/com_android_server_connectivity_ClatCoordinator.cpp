@@ -113,6 +113,13 @@ static void verifyClatPerms() {
     // Clat BPF was only mainlined during T.
     if (!modules::sdklevel::IsAtLeastT()) return;
 
+    // Legacy kernels without bpffs cannot provide CLAT BPF maps.
+    if (access("/sys/fs/bpf", F_OK) != 0 && errno == ENOENT) {
+        if (fatal) abort();
+        ALOGW("Skipping CLAT BPF verification: bpffs is unavailable");
+        return;
+    }
+
     V("/sys/fs/bpf", S_IFDIR|S_ISVTX|0777, ROOT, ROOT, "fs_bpf", DIR);
 
     V("/sys/fs/bpf/net_shared", S_IFDIR|01777, ROOT, ROOT, "fs_bpf_net_shared", DIR);

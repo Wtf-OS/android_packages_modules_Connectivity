@@ -144,4 +144,10 @@ public class SingleWriterBpfMap<K extends Struct, V extends Struct> extends BpfM
     public synchronized V getValue(@NonNull K key) throws ErrnoException {
         return mCache.get(key);
     }
+
+    @Override
+    public synchronized void clear() throws ErrnoException {
+        super.clear();
+        mCache.clear();
+    }
 }

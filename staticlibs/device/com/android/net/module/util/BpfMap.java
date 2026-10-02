@@ -22,14 +22,18 @@ import static android.system.OsConstants.ENOENT;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.ErrnoException;
+import android.util.Log;
 import android.util.Pair;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,11 +68,17 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     private static final int BPF_NOEXIST = 1;
     private static final int BPF_EXIST = 2;
 
+    private static final String TAG = "BpfMap";
+
     private final ParcelFileDescriptor mMapFd;
     private final Class<K> mKeyClass;
     private final Class<V> mValueClass;
     private final int mKeySize;
     private final int mValueSize;
+    private final ConcurrentHashMap<K, V> mFallbackMap;
+
+    private static final ConcurrentHashMap<String, ConcurrentHashMap<?, ?>> sFallbackCache =
+            new ConcurrentHashMap<>();
 
     private static ConcurrentHashMap<Pair<String, Integer>, ParcelFileDescriptor> sFdCache =
             new ConcurrentHashMap<>();
@@ -109,13 +119,29 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
      * @throws ErrnoException if the BPF map associated with {@code path} cannot be retrieved.
      * @throws NullPointerException if {@code path} is null.
      */
+    @SuppressWarnings("unchecked")
     public BpfMap(@NonNull final String path, final int flag, final Class<K> key,
             final Class<V> value) throws ErrnoException, NullPointerException {
         mKeyClass = key;
         mValueClass = value;
         mKeySize = Struct.getSize(key);
         mValueSize = Struct.getSize(value);
-        mMapFd = cachedBpfFdGet(path, flag, mKeySize, mValueSize);
+
+        ParcelFileDescriptor fd = null;
+        try {
+            fd = cachedBpfFdGet(path, flag, mKeySize, mValueSize);
+        } catch (ErrnoException e) {
+            Log.w(TAG, "Failed to open BPF map at " + path + ": " + e.getMessage()
+                    + ", falling back to in-memory map");
+            fd = null;
+        }
+        mMapFd = fd;
+        if (mMapFd == null) {
+            mFallbackMap = (ConcurrentHashMap<K, V>) sFallbackCache.computeIfAbsent(
+                    path, p -> new ConcurrentHashMap<>());
+        } else {
+            mFallbackMap = null;
+        }
     }
 
     /**
@@ -135,6 +161,10 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
      */
     @Override
     public void updateEntry(K key, V value) throws ErrnoException {
+        if (mFallbackMap != null) {
+            mFallbackMap.put(key, value);
+            return;
+        }
         nativeWriteToMapEntry(mMapFd.getFd(), key.writeToBytes(), value.writeToBytes(), BPF_ANY);
     }
 
@@ -145,6 +175,12 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public void insertEntry(K key, V value)
             throws ErrnoException, IllegalStateException {
+        if (mFallbackMap != null) {
+            if (mFallbackMap.putIfAbsent(key, value) != null) {
+                throw new IllegalStateException(key + " already exists");
+            }
+            return;
+        }
         try {
             nativeWriteToMapEntry(mMapFd.getFd(), key.writeToBytes(), value.writeToBytes(),
                     BPF_NOEXIST);
@@ -162,6 +198,12 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public void replaceEntry(K key, V value)
             throws ErrnoException, NoSuchElementException {
+        if (mFallbackMap != null) {
+            if (mFallbackMap.replace(key, value) == null) {
+                throw new NoSuchElementException(key + " not found");
+            }
+            return;
+        }
         try {
             nativeWriteToMapEntry(mMapFd.getFd(), key.writeToBytes(), value.writeToBytes(),
                     BPF_EXIST);
@@ -181,6 +223,9 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public boolean insertOrReplaceEntry(K key, V value)
             throws ErrnoException {
+        if (mFallbackMap != null) {
+            return mFallbackMap.put(key, value) == null;
+        }
         try {
             nativeWriteToMapEntry(mMapFd.getFd(), key.writeToBytes(), value.writeToBytes(),
                     BPF_NOEXIST);
@@ -207,6 +252,9 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     /** Remove existing key from eBpf map. Return false if map was not modified. */
     @Override
     public boolean deleteEntry(K key) throws ErrnoException {
+        if (mFallbackMap != null) {
+            return mFallbackMap.remove(key) != null;
+        }
         return nativeDeleteMapEntry(mMapFd.getFd(), key.writeToBytes());
     }
 
@@ -231,12 +279,25 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public K getNextKey(@NonNull K key) throws ErrnoException {
         Objects.requireNonNull(key);
+        if (mFallbackMap != null) {
+            Iterator<K> it = mFallbackMap.keySet().iterator();
+            while (it.hasNext()) {
+                if (Objects.equals(it.next(), key)) {
+                    return it.hasNext() ? it.next() : null;
+                }
+            }
+            return null;
+        }
         return getNextKeyInternal(key);
     }
 
     /** Get the first key of eBpf map. */
     @Override
     public K getFirstKey() throws ErrnoException {
+        if (mFallbackMap != null) {
+            Iterator<K> it = mFallbackMap.keySet().iterator();
+            return it.hasNext() ? it.next() : null;
+        }
         return getNextKeyInternal(null);
     }
 
@@ -244,6 +305,9 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public boolean containsKey(@NonNull K key) throws ErrnoException {
         Objects.requireNonNull(key);
+        if (mFallbackMap != null) {
+            return mFallbackMap.containsKey(key);
+        }
 
         byte[] rawValue = new byte[mValueSize];
         return nativeFindMapEntry(mMapFd.getFd(), key.writeToBytes(), rawValue);
@@ -253,6 +317,9 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
     @Override
     public V getValue(@NonNull K key) throws ErrnoException {
         Objects.requireNonNull(key);
+        if (mFallbackMap != null) {
+            return mFallbackMap.get(key);
+        }
 
         byte[] rawValue = new byte[mValueSize];
         if (!nativeFindMapEntry(mMapFd.getFd(), key.writeToBytes(), rawValue)) return null;
@@ -262,9 +329,48 @@ public class BpfMap<K extends Struct, V extends Struct> implements IBpfMap<K, V>
         return Struct.parse(mValueClass, buffer);
     }
 
+    @Override
+    public boolean isEmpty() throws ErrnoException {
+        if (mFallbackMap != null) {
+            return mFallbackMap.isEmpty();
+        }
+        return getFirstKey() == null;
+    }
+
+    @Override
+    public void clear() throws ErrnoException {
+        if (mFallbackMap != null) {
+            mFallbackMap.clear();
+            return;
+        }
+        IBpfMap.super.clear();
+    }
+
+    @Override
+    public void forEach(ThrowingBiConsumer<K, V> action) throws ErrnoException {
+        if (mFallbackMap != null) {
+            for (Map.Entry<K, V> entry : mFallbackMap.entrySet()) {
+                action.accept(entry.getKey(), entry.getValue());
+            }
+            return;
+        }
+        IBpfMap.super.forEach(action);
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (mMapFd != null) {
+            mMapFd.close();
+        }
+    }
+
     /** Synchronize Kernel RCU */
     public static void synchronizeKernelRCU() throws ErrnoException {
-        nativeSynchronizeKernelRCU();
+        try {
+            nativeSynchronizeKernelRCU();
+        } catch (ErrnoException e) {
+            Log.w(TAG, "synchronizeKernelRCU failed: " + e.getMessage());
+        }
     }
 
     private static native int nativeBpfFdGet(String path, int mode, int keySize, int valueSize)

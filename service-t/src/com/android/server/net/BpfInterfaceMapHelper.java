@@ -67,6 +67,9 @@ public class BpfInterfaceMapHelper {
 
     /** get interface name by interface index from bpf map */
     public String getIfNameByIndex(final int index) {
+        if (mIndexToIfaceBpfMap == null) {
+            return null;
+        }
         try {
             final InterfaceMapValue value = mIndexToIfaceBpfMap.getValue(new S32(index));
             if (value == null) {

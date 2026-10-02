@@ -191,8 +191,14 @@ public class BpfNetMaps {
         try {
             return SingleWriterBpfMap.getSingleton(
                     CONFIGURATION_MAP_PATH, S32.class, U32.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open netd configuration map", e);
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot open netd configuration map via SingleWriterBpfMap: " + e);
+            try {
+                return new BpfMap<>(CONFIGURATION_MAP_PATH, S32.class, U32.class);
+            } catch (Exception ex) {
+                Log.e(TAG, "Cannot open fallback configuration map: " + ex);
+                return null;
+            }
         }
     }
 
@@ -201,8 +207,14 @@ public class BpfNetMaps {
         try {
             return SingleWriterBpfMap.getSingleton(
                     UID_OWNER_MAP_PATH, S32.class, UidOwnerValue.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open uid owner map", e);
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot open uid owner map via SingleWriterBpfMap: " + e);
+            try {
+                return new BpfMap<>(UID_OWNER_MAP_PATH, S32.class, UidOwnerValue.class);
+            } catch (Exception ex) {
+                Log.e(TAG, "Cannot open fallback uid owner map: " + ex);
+                return null;
+            }
         }
     }
 
@@ -211,8 +223,14 @@ public class BpfNetMaps {
         try {
             return SingleWriterBpfMap.getSingleton(
                     UID_PERMISSION_MAP_PATH, S32.class, U8.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open uid permission map", e);
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot open uid permission map via SingleWriterBpfMap: " + e);
+            try {
+                return new BpfMap<>(UID_PERMISSION_MAP_PATH, S32.class, U8.class);
+            } catch (Exception ex) {
+                Log.e(TAG, "Cannot open fallback uid permission map: " + ex);
+                return null;
+            }
         }
     }
 
@@ -222,8 +240,9 @@ public class BpfNetMaps {
             // Cannot use SingleWriterBpfMap because it's written by ClatCoordinator as well.
             return new BpfMap<>(COOKIE_TAG_MAP_PATH,
                     CookieTagMapKey.class, CookieTagMapValue.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open cookie tag map", e);
+        } catch (Exception e) {
+            Log.e(TAG, "Cannot open cookie tag map: " + e);
+            return null;
         }
     }
 
@@ -232,8 +251,14 @@ public class BpfNetMaps {
         try {
             return SingleWriterBpfMap.getSingleton(
                     DATA_SAVER_ENABLED_MAP_PATH, S32.class, U8.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open data saver enabled map", e);
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot open data saver enabled map via SingleWriterBpfMap: " + e);
+            try {
+                return new BpfMap<>(DATA_SAVER_ENABLED_MAP_PATH, S32.class, U8.class);
+            } catch (Exception ex) {
+                Log.e(TAG, "Cannot open fallback data saver map: " + ex);
+                return null;
+            }
         }
     }
 
@@ -242,62 +267,81 @@ public class BpfNetMaps {
         try {
             return SingleWriterBpfMap.getSingleton(INGRESS_DISCARD_MAP_PATH,
                     IngressDiscardKey.class, IngressDiscardValue.class);
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Cannot open ingress discard map", e);
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot open ingress discard map via SingleWriterBpfMap: " + e);
+            try {
+                return new BpfMap<>(INGRESS_DISCARD_MAP_PATH,
+                        IngressDiscardKey.class, IngressDiscardValue.class);
+            } catch (Exception ex) {
+                Log.e(TAG, "Cannot open fallback ingress discard map: " + ex);
+                return null;
+            }
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private static void initBpfMaps() {
-        if (sConfigurationMap == null) {
-            sConfigurationMap = getConfigurationMap();
-        }
         try {
-            sConfigurationMap.updateEntry(UID_RULES_CONFIGURATION_KEY,
-                    new U32(UID_RULES_DEFAULT_CONFIGURATION));
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Failed to initialize uid rules configuration", e);
-        }
-        try {
-            sConfigurationMap.updateEntry(CURRENT_STATS_MAP_CONFIGURATION_KEY,
-                    new U32(STATS_SELECT_MAP_A));
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Failed to initialize current stats configuration", e);
+            if (sConfigurationMap == null) {
+                sConfigurationMap = getConfigurationMap();
+            }
+            if (sConfigurationMap != null) {
+                sConfigurationMap.updateEntry(UID_RULES_CONFIGURATION_KEY,
+                        new U32(UID_RULES_DEFAULT_CONFIGURATION));
+                sConfigurationMap.updateEntry(CURRENT_STATS_MAP_CONFIGURATION_KEY,
+                        new U32(STATS_SELECT_MAP_A));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize configuration map: " + e);
         }
 
-        if (sUidOwnerMap == null) {
-            sUidOwnerMap = getUidOwnerMap();
-        }
         try {
-            sUidOwnerMap.clear();
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Failed to initialize uid owner map", e);
+            if (sUidOwnerMap == null) {
+                sUidOwnerMap = getUidOwnerMap();
+            }
+            if (sUidOwnerMap != null) {
+                sUidOwnerMap.clear();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize uid owner map: " + e);
         }
 
-        if (sUidPermissionMap == null) {
-            sUidPermissionMap = getUidPermissionMap();
-        }
-
-        if (sCookieTagMap == null) {
-            sCookieTagMap = getCookieTagMap();
-        }
-
-        if (sDataSaverEnabledMap == null) {
-            sDataSaverEnabledMap = getDataSaverEnabledMap();
-        }
         try {
-            sDataSaverEnabledMap.updateEntry(DATA_SAVER_ENABLED_KEY, new U8(DATA_SAVER_DISABLED));
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Failed to initialize data saver configuration", e);
+            if (sUidPermissionMap == null) {
+                sUidPermissionMap = getUidPermissionMap();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize uid permission map: " + e);
         }
 
-        if (sIngressDiscardMap == null) {
-            sIngressDiscardMap = getIngressDiscardMap();
-        }
         try {
-            sIngressDiscardMap.clear();
-        } catch (ErrnoException e) {
-            throw new IllegalStateException("Failed to initialize ingress discard map", e);
+            if (sCookieTagMap == null) {
+                sCookieTagMap = getCookieTagMap();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize cookie tag map: " + e);
+        }
+
+        try {
+            if (sDataSaverEnabledMap == null) {
+                sDataSaverEnabledMap = getDataSaverEnabledMap();
+            }
+            if (sDataSaverEnabledMap != null) {
+                sDataSaverEnabledMap.updateEntry(DATA_SAVER_ENABLED_KEY, new U8(DATA_SAVER_DISABLED));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize data saver map: " + e);
+        }
+
+        try {
+            if (sIngressDiscardMap == null) {
+                sIngressDiscardMap = getIngressDiscardMap();
+            }
+            if (sIngressDiscardMap != null) {
+                sIngressDiscardMap.clear();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to initialize ingress discard map: " + e);
         }
     }
 
