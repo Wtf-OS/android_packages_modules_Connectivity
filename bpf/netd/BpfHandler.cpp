@@ -21,6 +21,7 @@
 #include <linux/bpf.h>
 #include <inttypes.h>
 
+#include <android-base/properties.h>
 #include <android-base/result.h>
 #include <android-base/unique_fd.h>
 #include <bpf/WaitForProgsLoaded.h>
@@ -85,8 +86,10 @@ static Result<void> checkProgramAccessible(const char* programPath) {
 }
 
 static void getsockoptTest() {
-    // getsockopt bpf hook is not called if the device is running in compat mode.
-    if (isKernel64Bit() != isUserspace64bit() && !isAtLeastKernelVersion(6, 13)) return;
+    // Osprey mainline bypasses getsockopt BPF hooks for compat syscalls, including 7.x.
+    if (isKernel64Bit() != isUserspace64bit() &&
+        (!isAtLeastKernelVersion(6, 13) ||
+         base::GetBoolProperty("ro.vendor.osprey.mainline_bpf_compat", false))) return;
 
     // SO_ANDROID_DROP_REASON option is only supported on 5.10+.
     if (!isAtLeastKernelVersion(5, 10)) return;
